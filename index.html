@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kanban Board</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+    <header class="app-header">
+        <h1>SyntaxTech</h1>
+        <button id="addTaskBtn" class="btn-primary">+ Yeni Tapşırıq</button>
+    </header>
+
+    <div class="toolbar">
+        <input type="text" id="searchInput" placeholder="Tapşırıq axınında axtar..." />
+        <select id="filterPriority">
+            <option value="all">Bütün prioritetlər</option>
+            <option value="low">Aşağı (Low)</option>
+            <option value="medium">Orta (Medium)</option>
+            <option value="high">Yüksək (High)</option>
+        </select>
+        <button id="resetBtn" class="btn-secondary">Sıfırla</button>
+    </div>
+
+    <main class="board">
+        <section class="column" data-column="todo">
+            <h2>Gözləmədə</h2>
+            <div class="task-list" id="todoList"></div>
+        </section>
+        <section class="column" data-column="inprogress">
+            <h2>İcra olunur</h2>
+            <div class="task-list" id="inprogressList"></div>
+        </section>
+        <section class="column" data-column="done">
+            <h2>Tamamlandı</h2>
+            <div class="task-list" id="doneList"></div>
+        </section>
+    </main>
+
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal">
+            <h2 id="modalTitle">Yeni Tapşırıq</h2>
+            <form id="taskForm">
+                <div class="form-group">
+                    <label for="taskTitle">Başlıq *</label>
+                    <input type="text" id="taskTitle" required />
+                </div>
+                <div class="form-group">
+                    <label for="taskDesc">Açıqlama</label>
+                    <textarea id="taskDesc" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="taskPriority">Prioritet dərəcəsi</label>
+                    <select id="taskPriority">
+                        <option value="low">Aşağı (Low)</option>
+                        <option value="medium" selected>Orta (Medium)</option>
+                        <option value="high">Yüksək (High)</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn-primary" id="saveBtn">Yadda saxla</button>
+                    <button type="button" class="btn-secondary" id="cancelBtn">Ləğv et</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
