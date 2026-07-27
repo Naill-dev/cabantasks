@@ -29,13 +29,7 @@ function loadTasks() {
         } catch {
             tasks = [];
         }
-    } else {
-        tasks = [
-            { id: nextId++, title: 'DEVJOINT', desc: 'M07 15', priority: 'high', column: 'inprogress' },
-            { id: nextId++, title: 'Aşağı Deviont', desc: 'M07 15', priority: 'low', column: 'todo' },
-            { id: nextId++, title: 'DEVJOINT', desc: 'M07 15', priority: 'medium', column: 'done' }
-        ];
-    }
+    } 
     renderAll();
 }
 
