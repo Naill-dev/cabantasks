@@ -82,5 +82,8 @@ The application is fully responsive and optimized for desktop, tablet, and mobil
 
 This project is available for educational and personal use.
 
+## 🌐 Live Demo
+https://naill-dev.github.io/cabantasks/
+
 ## Author 
 Nail Mammadov
