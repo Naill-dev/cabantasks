@@ -28,6 +28,7 @@ function loadTasks() {
             nextId = tasks.reduce((max, t) => Math.max(max, t.id), 0) + 1;
         } catch {
             tasks = [];
+            nextId = 1;
         }
     } 
     renderAll();
