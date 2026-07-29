@@ -47,13 +47,13 @@ kanban-board/
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/your-username/kanban-board.git
+git clone https://github.com/Naill-dev/cabantasks
 ```
 
 2. Open the project folder:
 
 ```bash
-cd kanban-board
+cd canbantasks
 ```
 
 3. Open `index.html` in your browser or use a local development server.
