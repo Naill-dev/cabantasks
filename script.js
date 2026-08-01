@@ -1,234 +1,383 @@
-const STORAGE_KEY = 'kanban_tasks';
-let tasks = [];
-let editingId = null;
-let nextId = 1;
-const columns = ['todo', 'inprogress', 'done'];
+(function () {
+  "use strict";
 
-const todoList = document.getElementById('todoList');
-const inprogressList = document.getElementById('inprogressList');
-const doneList = document.getElementById('doneList');
-const searchInput = document.getElementById('searchInput');
-const filterPriority = document.getElementById('filterPriority');
-const resetBtn = document.getElementById('resetBtn');
-const addTaskBtn = document.getElementById('addTaskBtn');
-const modalOverlay = document.getElementById('modalOverlay');
-const modalTitle = document.getElementById('modalTitle');
-const taskForm = document.getElementById('taskForm');
-const taskTitle = document.getElementById('taskTitle');
-const taskDesc = document.getElementById('taskDesc');
-const taskPriority = document.getElementById('taskPriority');
-const saveBtn = document.getElementById('saveBtn');
-const cancelBtn = document.getElementById('cancelBtn');
+  var STORAGE_KEY = "kanban-tasks-v1";
+  var STATUSES = ["todo", "progress", "done"];
+  var ACCENT_BY_PRIORITY = { low: "accent-teal", med: "accent-gold", high: "accent-rose" };
 
-function loadTasks() {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-        try {
-            tasks = JSON.parse(stored);
-            nextId = tasks.reduce((max, t) => Math.max(max, t.id), 0) + 1;
-        } catch {
-            tasks = [];
-            nextId = 1;
+  var tasks = loadTasks();
+  var draggedId = null;
+  var nextSeq = computeNextSeq();
+  var searchQuery = "";
+  var priorityFilter = "all";
+
+  function computeNextSeq() {
+    var max = 0;
+    tasks.forEach(function (t) {
+      var n = parseInt((t.code || "").replace(/\D/g, ""), 10);
+      if (!isNaN(n)) max = Math.max(max, n);
+    });
+    return max + 1;
+  }
+
+  function loadTasks() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return seedTasks();
+      var parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : seedTasks();
+    } catch (e) {
+      console.warn("Board oxuna bilmədi, sıfırdan başlanır.", e);
+      return seedTasks();
+    }
+  }
+
+  function seedTasks() {
+    return [
+      { id: uid(), code: "TSK-001", text: "Layihə qovluğunu qur (html/css/js)", status: "done", priority: "low" },
+      { id: uid(), code: "TSK-002", text: "Sürükləmə (drag-and-drop) məntiqini yaz", status: "progress", priority: "high" },
+      { id: uid(), code: "TSK-003", text: "localStorage ilə saxlamanı bağla", status: "todo", priority: "med" }
+    ];
+  }
+
+  function uid() {
+    return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+    } catch (e) {
+      console.warn("Board saxlanıla bilmədi.", e);
+    }
+  }
+
+  function applyFilters(items) {
+    return items.filter(function (t) {
+      var matchesQuery = !searchQuery || t.text.toLowerCase().indexOf(searchQuery) !== -1;
+      var matchesPriority = priorityFilter === "all" || t.priority === priorityFilter;
+      return matchesQuery && matchesPriority;
+    });
+  }
+
+  function render() {
+    STATUSES.forEach(function (status) {
+      var list = document.querySelector('[data-list="' + status + '"]');
+      var countEl = document.querySelector('[data-count="' + status + '"]');
+      var items = tasks.filter(function (t) { return t.status === status; });
+      items = applyFilters(items);
+
+      list.innerHTML = "";
+      countEl.textContent = items.length;
+
+      if (items.length === 0) {
+        var hint = document.createElement("div");
+        hint.className = "empty-hint";
+        hint.textContent = "Bu sütunda tapşırıq yoxdur";
+        list.appendChild(hint);
+      } else {
+        items.forEach(function (task) { list.appendChild(renderCard(task)); });
+      }
+
+      renderFoot(status);
+    });
+    renderStats();
+  }
+
+  function renderStats() {
+    var total = tasks.length;
+    var done = tasks.filter(function (t) { return t.status === "done"; }).length;
+    var statsEl = document.getElementById("boardStats");
+    if (statsEl) {
+      statsEl.innerHTML =
+        "<span>Cəmi: <b>" + total + "</b></span><span>Bitmiş: <b>" + done + "</b></span>";
+    }
+  }
+
+  function renderCard(task) {
+    var card = document.createElement("div");
+    card.className = "card " + (ACCENT_BY_PRIORITY[task.priority] || "");
+    card.draggable = true;
+    card.dataset.id = task.id;
+
+    var top = document.createElement("div");
+    top.className = "card-top";
+
+    var code = document.createElement("span");
+    code.className = "card-id";
+    code.textContent = task.code;
+
+    var prio = document.createElement("span");
+    prio.className = "priority " + task.priority;
+    prio.textContent = task.priority;
+
+    top.appendChild(code);
+    top.appendChild(prio);
+
+    var text = document.createElement("div");
+    text.className = "card-text";
+    text.textContent = task.text;
+    text.title = "Redaktə etmək üçün klikləyin";
+
+    var actions = document.createElement("div");
+    actions.className = "card-actions";
+    actions.appendChild(iconButton("edit", function () { startEdit(text, task); }));
+    actions.appendChild(iconButton("delete", function () { deleteTask(task.id); }));
+
+    card.appendChild(top);
+    card.appendChild(text);
+    card.appendChild(actions);
+
+    card.addEventListener("dragstart", function (e) {
+      draggedId = task.id;
+      card.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", task.id);
+    });
+
+    card.addEventListener("dragend", function () {
+      card.classList.remove("dragging");
+      draggedId = null;
+    });
+
+    return card;
+  }
+
+  function iconButton(kind, onClick) {
+    var btn = document.createElement("button");
+    btn.className = "icon-btn";
+    btn.type = "button";
+    btn.title = kind === "edit" ? "Redaktə et" : "Sil";
+    btn.innerHTML = kind === "edit"
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>';
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      onClick();
+    });
+    return btn;
+  }
+
+  function startEdit(textEl, task) {
+    textEl.contentEditable = "true";
+    textEl.focus();
+    placeCursorAtEnd(textEl);
+
+    function finish(doSave) {
+      textEl.contentEditable = "false";
+      textEl.removeEventListener("blur", onBlur);
+      textEl.removeEventListener("keydown", onKey);
+      if (doSave) {
+        var newText = textEl.textContent.trim();
+        if (newText) {
+          task.text = newText;
+          persistAndRender();
+        } else {
+          textEl.textContent = task.text;
         }
-    } 
-    renderAll();
-}
+      } else {
+        textEl.textContent = task.text;
+      }
+    }
 
-function saveTasks() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-}
+    function onBlur() {
+      finish(true);
+    }
 
-function renderAll() {
-    const search = searchInput.value.trim().toLowerCase();
-    const priorityFilter = filterPriority.value;
-    const filtered = tasks.filter(task => {
-        const matchTitle = task.title.toLowerCase().includes(search);
-        const matchPriority = priorityFilter === 'all' || task.priority === priorityFilter;
-        return matchTitle && matchPriority;
+    function onKey(e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        textEl.blur();
+      }
+      if (e.key === "Escape") {
+        finish(false);
+      }
+    }
+
+    textEl.addEventListener("blur", onBlur);
+    textEl.addEventListener("keydown", onKey);
+  }
+
+  function placeCursorAtEnd(el) {
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function deleteTask(id) {
+    if (confirm("Tapşırığı silmək istədiyinizə əminsiniz?")) {
+      tasks = tasks.filter(function (t) { return t.id !== id; });
+      persistAndRender();
+    }
+  }
+
+  function renderFoot(status) {
+    var foot = document.querySelector('[data-foot="' + status + '"]');
+    foot.innerHTML = "";
+    var trigger = document.createElement("button");
+    trigger.className = "new-task-trigger";
+    trigger.type = "button";
+    trigger.textContent = "+ Tapşırıq əlavə et";
+    trigger.addEventListener("click", function () { showAddForm(status); });
+    foot.appendChild(trigger);
+  }
+
+  function showAddForm(status) {
+    var foot = document.querySelector('[data-foot="' + status + '"]');
+    foot.innerHTML = "";
+
+    var form = document.createElement("div");
+    form.className = "add-form";
+
+    var textarea = document.createElement("textarea");
+    textarea.placeholder = "Tapşırığı yazın…";
+    textarea.rows = 2;
+
+    var row = document.createElement("div");
+    row.className = "add-form-row";
+
+    var select = document.createElement("select");
+    select.className = "prio-select";
+    ["low", "med", "high"].forEach(function (p) {
+      var opt = document.createElement("option");
+      opt.value = p;
+      opt.textContent = p.toUpperCase();
+      if (p === "med") opt.selected = true;
+      select.appendChild(opt);
     });
-    columns.forEach(col => {
-        const list = document.getElementById(col + 'List');
-        const colTasks = filtered.filter(t => t.column === col);
-        list.innerHTML = colTasks.map(task => createTaskCard(task)).join('');
+
+    var btnRow = document.createElement("div");
+    btnRow.style.display = "flex";
+    btnRow.style.gap = "6px";
+
+    var cancelBtn = document.createElement("button");
+    cancelBtn.className = "icon-btn cancel-btn";
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "Ləğv et";
+    cancelBtn.addEventListener("click", function () { renderFoot(status); });
+
+    var addBtn = document.createElement("button");
+    addBtn.className = "add-btn-mini";
+    addBtn.type = "button";
+    addBtn.textContent = "Əlavə et";
+    addBtn.addEventListener("click", function () {
+      commitNewTask(textarea.value, select.value, status);
     });
-    attachDragEvents();
-    saveTasks();
-}
 
-function createTaskCard(task) {
-    const priorityLabel = { low: 'Aşağı', medium: 'Orta', high: 'Yüksək' };
-    return `
-        <div class="task-card" draggable="true" data-id="${task.id}" data-column="${task.column}">
-            <div class="title">${escapeHtml(task.title)}</div>
-            <div class="desc">${escapeHtml(task.desc || '')}</div>
-            <div class="meta">
-                <span class="priority-badge priority-${task.priority}">${priorityLabel[task.priority]}</span>
-                <div class="actions">
-                    <button class="edit-btn" data-id="${task.id}">✎</button>
-                    <button class="delete-btn" data-id="${task.id}">✕</button>
-                </div>
-            </div>
-        </div>
-    `;
-}
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(addBtn);
+    row.appendChild(select);
+    row.appendChild(btnRow);
+    form.appendChild(textarea);
+    form.appendChild(row);
+    foot.appendChild(form);
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-    return text.replace(/[&<>"']/g, m => map[m]);
-}
-
-function attachDragEvents() {
-    document.querySelectorAll('.task-card').forEach(card => {
-        card.addEventListener('dragstart', handleDragStart);
-        card.addEventListener('dragend', handleDragEnd);
-        card.addEventListener('click', handleCardClick);
+    textarea.focus();
+    textarea.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        commitNewTask(textarea.value, select.value, status);
+      }
     });
-    document.querySelectorAll('.task-list').forEach(list => {
-        list.addEventListener('dragover', handleDragOver);
-        list.addEventListener('dragenter', handleDragEnter);
-        list.addEventListener('dragleave', handleDragLeave);
-        list.addEventListener('drop', handleDrop);
+  }
+
+  function commitNewTask(text, priority, status) {
+    var trimmed = (text || "").trim();
+    if (!trimmed) return;
+
+    var isDuplicate = tasks.some(function (t) {
+      return t.status === status && t.text.trim().toLowerCase() === trimmed.toLowerCase();
     });
-}
 
-let draggedId = null;
-
-function handleDragStart(e) {
-    draggedId = parseInt(this.dataset.id);
-    this.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', this.dataset.id);
-}
-
-function handleDragEnd(e) {
-    this.classList.remove('dragging');
-    document.querySelectorAll('.task-list').forEach(l => l.classList.remove('drop-over'));
-}
-
-function handleDragOver(e) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-}
-
-function handleDragEnter(e) {
-    e.preventDefault();
-    this.classList.add('drop-over');
-}
-
-function handleDragLeave(e) {
-    this.classList.remove('drop-over');
-}
-
-function handleDrop(e) {
-    e.preventDefault();
-    this.classList.remove('drop-over');
-    const id = parseInt(e.dataTransfer.getData('text/plain'));
-    const newColumn = this.id.replace('List', '');
-    const task = tasks.find(t => t.id === id);
-    if (task && task.column !== newColumn) {
-        task.column = newColumn;
-        renderAll();
+    if (isDuplicate) {
+      alert("Bu tapşırıq artıq bu sütunda mövcuddur.");
+      return;
     }
-}
 
-function handleCardClick(e) {
-    const target = e.target.closest('button');
-    if (!target) return;
-    const id = parseInt(target.dataset.id);
-    if (target.classList.contains('edit-btn')) {
-        openEditModal(id);
-    } else if (target.classList.contains('delete-btn')) {
-        deleteTask(id);
+    tasks.push({
+      id: uid(),
+      code: "TSK-" + String(nextSeq++).padStart(3, "0"),
+      text: trimmed,
+      status: status,
+      priority: priority
+    });
+    persistAndRender();
+    renderFoot(status);
+  }
+
+  function persistAndRender() {
+    save();
+    render();
+  }
+
+
+  document.querySelectorAll(".lane").forEach(function (lane) {
+    lane.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      lane.classList.add("drag-over");
+    });
+
+    lane.addEventListener("dragleave", function () {
+      lane.classList.remove("drag-over");
+    });
+
+    lane.addEventListener("drop", function (e) {
+      e.preventDefault();
+      lane.classList.remove("drag-over");
+      var id = e.dataTransfer.getData("text/plain") || draggedId;
+      if (!id) return;
+      var task = tasks.find(function (t) { return t.id === id; });
+      if (task && task.status !== lane.dataset.status) {
+        task.status = lane.dataset.status;
+        persistAndRender();
+      }
+    });
+  });
+
+
+  var spotlight = document.getElementById("spotlight");
+  if (spotlight) {
+    window.addEventListener("mousemove", function (e) {
+      spotlight.style.setProperty("--mx", e.clientX + "px");
+      spotlight.style.setProperty("--my", e.clientY + "px");
+    });
+  }
+
+
+  var field = document.getElementById("particles");
+  if (field) {
+    var PARTICLE_COUNT = 22;
+    for (var i = 0; i < PARTICLE_COUNT; i++) {
+      var p = document.createElement("i");
+      p.style.left = (Math.random() * 100) + "vw";
+      var duration = 10 + Math.random() * 14;
+      p.style.animationDuration = duration + "s";
+      p.style.animationDelay = (Math.random() * duration) + "s";
+      p.style.width = p.style.height = (2 + Math.random() * 2) + "px";
+      if (Math.random() > 0.6) p.style.background = "var(--teal)";
+      field.appendChild(p);
     }
-}
+  }
 
-function addTask(title, desc, priority, column = 'todo') {
-    const newTask = {
-        id: nextId++,
-        title: title.trim(),
-        desc: desc.trim(),
-        priority: priority,
-        column: column
-    };
-    tasks.push(newTask);
-    renderAll();
-}
+  
+  var searchInput = document.getElementById("searchInput");
+  if (searchInput) {
+    searchInput.addEventListener("input", function (e) {
+      searchQuery = e.target.value.trim().toLowerCase();
+      render();
+    });
+  }
 
-function deleteTask(id) {
-    if (confirm('Tapşırığı silmək istəyirsiniz?')) {
-        tasks = tasks.filter(t => t.id !== id);
-        renderAll();
-    }
-}
+  var priorityFilterEl = document.getElementById("priorityFilter");
+  if (priorityFilterEl) {
+    priorityFilterEl.addEventListener("change", function (e) {
+      priorityFilter = e.target.value;
+      render();
+    });
+  }
 
-function updateTask(id, title, desc, priority) {
-    const task = tasks.find(t => t.id === id);
-    if (task) {
-        task.title = title.trim();
-        task.desc = desc.trim();
-        task.priority = priority;
-        renderAll();
-    }
-}
-
-function openAddModal() {
-    editingId = null;
-    modalTitle.textContent = 'Yeni Tapşırıq';
-    taskForm.reset();
-    taskPriority.value = 'medium';
-    modalOverlay.classList.add('open');
-}
-
-function openEditModal(id) {
-    const task = tasks.find(t => t.id === id);
-    if (!task) return;
-    editingId = id;
-    modalTitle.textContent = 'Tapşırığı redaktə et';
-    taskTitle.value = task.title;
-    taskDesc.value = task.desc;
-    taskPriority.value = task.priority;
-    modalOverlay.classList.add('open');
-}
-
-function closeModal() {
-    modalOverlay.classList.remove('open');
-    editingId = null;
-}
-
-taskForm.addEventListener('submit', function (e) {
-    e.preventDefault();
-    const title = taskTitle.value.trim();
-    const desc = taskDesc.value.trim();
-    const priority = taskPriority.value;
-    if (!title) {
-        alert('Başlıq daxil edin!');
-        return;
-    }
-    if (editingId !== null) {
-        updateTask(editingId, title, desc, priority);
-    } else {
-        const duplicate = tasks.some(t => t.title === title && t.column === 'todo');
-        if (duplicate) {
-            alert('Bu başlıqlı tapşırıq artıq "Gözləmədə" sütununda var!');
-            return;
-        }
-        addTask(title, desc, priority);
-    }
-    closeModal();
-});
-
-cancelBtn.addEventListener('click', closeModal);
-modalOverlay.addEventListener('click', function (e) {
-    if (e.target === this) closeModal();
-});
-addTaskBtn.addEventListener('click', openAddModal);
-searchInput.addEventListener('input', renderAll);
-filterPriority.addEventListener('change', renderAll);
-resetBtn.addEventListener('click', function () {
-    searchInput.value = '';
-    filterPriority.value = 'all';
-    renderAll();
-});
-
-loadTasks();
+  render();
+})();
