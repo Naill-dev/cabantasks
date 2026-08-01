@@ -19,13 +19,19 @@
     return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
   }
 
+  /* XSS-dən qorunma — istifadəçi mətni heç vaxt innerHTML-ə birbaşa yazılmır */
+  function escapeHtml(str) {
+    var div = document.createElement("div");
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
   function loadTasks() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return seedTasks();
       var parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return seedTasks();
-      // Normalize old data (med → medium, progress → inprogress)
       return parsed.map(function (t) {
         if (t.priority === "med") t.priority = "medium";
         if (t.status === "progress") t.status = "inprogress";
@@ -87,6 +93,18 @@
     } catch (e) {
       console.warn("Board saxlanıla bilmədi.", e);
     }
+  }
+
+  /**
+   * Duplicate yoxlaması — BÜTÜN sütunlarda + redaktə zamanı
+   * excludeId: redaktə edilən tapşırığın özünü nəzərə almamaq üçün
+   */
+  function isDuplicateTitle(title, excludeId) {
+    var normalized = title.trim().toLowerCase();
+    return tasks.some(function (t) {
+      if (excludeId && t.id === excludeId) return false;
+      return (t.title || "").trim().toLowerCase() === normalized;
+    });
   }
 
   function applyFilters(items) {
@@ -151,6 +169,11 @@
     }
   }
 
+  /**
+   * Kart yaradılır. Drag listener-lər KART ÜZƏRİNDƏ Yox,
+   * event delegation ilə board səviyyəsindədir (aşağıda).
+   * Beləliklə hər render-də listener təkrar əlavə olunmur.
+   */
   function renderCard(task) {
     var card = document.createElement("div");
     card.className = "task-card priority-" + (task.priority || "medium");
@@ -159,7 +182,7 @@
 
     var title = document.createElement("div");
     title.className = "title";
-    title.textContent = task.title || "";
+    title.textContent = task.title || ""; // textContent = XSS-safe
 
     var desc = document.createElement("div");
     desc.className = "desc";
@@ -183,21 +206,15 @@
     editBtn.type = "button";
     editBtn.className = "edit-btn";
     editBtn.title = "Redaktə et";
+    editBtn.dataset.action = "edit";
     editBtn.textContent = "✏️";
-    editBtn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      openModal(task);
-    });
 
     var delBtn = document.createElement("button");
     delBtn.type = "button";
     delBtn.className = "delete-btn";
     delBtn.title = "Sil";
+    delBtn.dataset.action = "delete";
     delBtn.textContent = "🗑️";
-    delBtn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      deleteTask(task.id);
-    });
 
     actions.appendChild(editBtn);
     actions.appendChild(delBtn);
@@ -209,21 +226,6 @@
     card.appendChild(title);
     if (task.desc) card.appendChild(desc);
     card.appendChild(meta);
-
-    card.addEventListener("dragstart", function (e) {
-      draggedId = task.id;
-      card.classList.add("dragging");
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", task.id);
-    });
-
-    card.addEventListener("dragend", function () {
-      card.classList.remove("dragging");
-      draggedId = null;
-      document.querySelectorAll(".column").forEach(function (col) {
-        col.classList.remove("drop-over");
-      });
-    });
 
     return card;
   }
@@ -268,6 +270,12 @@
     var title = titleInput.value.trim();
     if (!title) return;
 
+    // Duplicate yoxlaması — bütün sütunlar + redaktə zamanı
+    if (isDuplicateTitle(title, editingId)) {
+      alert("Bu başlıqlı tapşırıq artıq mövcuddur (bütün sütunlar yoxlanılır).");
+      return;
+    }
+
     var desc = descInput.value.trim();
     var priority = prioritySelect.value;
 
@@ -307,7 +315,47 @@
     openModal(null);
   });
 
-  /* ---------- Drag & Drop ---------- */
+  /* ---------- Event Delegation (bir dəfə bağlanır, hər render-də təkrarlanmır) ---------- */
+
+  // Kart klikləri (edit / delete)
+  document.querySelector(".board").addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-action]");
+    if (!btn) return;
+    var card = btn.closest(".task-card");
+    if (!card) return;
+    var id = card.dataset.id;
+    var action = btn.dataset.action;
+
+    if (action === "edit") {
+      var task = tasks.find(function (t) {
+        return t.id === id;
+      });
+      if (task) openModal(task);
+    } else if (action === "delete") {
+      deleteTask(id);
+    }
+  });
+
+  // Drag start / end — delegation
+  document.querySelector(".board").addEventListener("dragstart", function (e) {
+    var card = e.target.closest(".task-card");
+    if (!card) return;
+    draggedId = card.dataset.id;
+    card.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", card.dataset.id);
+  });
+
+  document.querySelector(".board").addEventListener("dragend", function (e) {
+    var card = e.target.closest(".task-card");
+    if (card) card.classList.remove("dragging");
+    draggedId = null;
+    document.querySelectorAll(".column").forEach(function (col) {
+      col.classList.remove("drop-over");
+    });
+  });
+
+  // Drop zonaları — sütunlara bir dəfə bağlanır
   document.querySelectorAll(".column").forEach(function (column) {
     column.addEventListener("dragover", function (e) {
       e.preventDefault();
