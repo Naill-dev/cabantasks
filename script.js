@@ -2,22 +2,21 @@
   "use strict";
 
   var STORAGE_KEY = "kanban-tasks-v1";
-  var STATUSES = ["todo", "progress", "done"];
-  var ACCENT_BY_PRIORITY = { low: "accent-teal", med: "accent-gold", high: "accent-rose" };
+  var STATUSES = ["todo", "inprogress", "done"];
+  var PRIORITY_LABEL = {
+    low: "Aşağı",
+    medium: "Orta",
+    high: "Yüksək"
+  };
 
   var tasks = loadTasks();
   var draggedId = null;
-  var nextSeq = computeNextSeq();
+  var editingId = null;
   var searchQuery = "";
   var priorityFilter = "all";
 
-  function computeNextSeq() {
-    var max = 0;
-    tasks.forEach(function (t) {
-      var n = parseInt((t.code || "").replace(/\D/g, ""), 10);
-      if (!isNaN(n)) max = Math.max(max, n);
-    });
-    return max + 1;
+  function uid() {
+    return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
   }
 
   function loadTasks() {
@@ -25,7 +24,19 @@
       var raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return seedTasks();
       var parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : seedTasks();
+      if (!Array.isArray(parsed)) return seedTasks();
+      // Normalize old data (med → medium, progress → inprogress)
+      return parsed.map(function (t) {
+        if (t.priority === "med") t.priority = "medium";
+        if (t.status === "progress") t.status = "inprogress";
+        if (!t.title && t.text) {
+          t.title = t.text;
+          delete t.text;
+        }
+        if (!t.desc) t.desc = "";
+        if (!t.code) t.code = "";
+        return t;
+      });
     } catch (e) {
       console.warn("Board oxuna bilmədi, sıfırdan başlanır.", e);
       return seedTasks();
@@ -34,14 +45,40 @@
 
   function seedTasks() {
     return [
-      { id: uid(), code: "TSK-001", text: "Layihə qovluğunu qur (html/css/js)", status: "done", priority: "low" },
-      { id: uid(), code: "TSK-002", text: "Sürükləmə (drag-and-drop) məntiqini yaz", status: "progress", priority: "high" },
-      { id: uid(), code: "TSK-003", text: "localStorage ilə saxlamanı bağla", status: "todo", priority: "med" }
+      {
+        id: uid(),
+        code: "TSK-001",
+        title: "Layihə qovluğunu qur (html/css/js)",
+        desc: "Baza strukturunu hazırla",
+        status: "done",
+        priority: "low"
+      },
+      {
+        id: uid(),
+        code: "TSK-002",
+        title: "Sürükləmə (drag-and-drop) məntiqini yaz",
+        desc: "Kartları sütunlar arasında hərəkət etdir",
+        status: "inprogress",
+        priority: "high"
+      },
+      {
+        id: uid(),
+        code: "TSK-003",
+        title: "localStorage ilə saxlamanı bağla",
+        desc: "Məlumatların itməsinin qarşısını al",
+        status: "todo",
+        priority: "medium"
+      }
     ];
   }
 
-  function uid() {
-    return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  function computeNextSeq() {
+    var max = 0;
+    tasks.forEach(function (t) {
+      var n = parseInt((t.code || "").replace(/\D/g, ""), 10);
+      if (!isNaN(n)) max = Math.max(max, n);
+    });
+    return max + 1;
   }
 
   function save() {
@@ -54,21 +91,35 @@
 
   function applyFilters(items) {
     return items.filter(function (t) {
-      var matchesQuery = !searchQuery || t.text.toLowerCase().indexOf(searchQuery) !== -1;
+      var q = searchQuery;
+      var matchesQuery =
+        !q ||
+        (t.title && t.title.toLowerCase().indexOf(q) !== -1) ||
+        (t.desc && t.desc.toLowerCase().indexOf(q) !== -1) ||
+        (t.code && t.code.toLowerCase().indexOf(q) !== -1);
       var matchesPriority = priorityFilter === "all" || t.priority === priorityFilter;
       return matchesQuery && matchesPriority;
     });
+  }
+
+  function persistAndRender() {
+    save();
+    render();
   }
 
   function render() {
     STATUSES.forEach(function (status) {
       var list = document.querySelector('[data-list="' + status + '"]');
       var countEl = document.querySelector('[data-count="' + status + '"]');
-      var items = tasks.filter(function (t) { return t.status === status; });
+      if (!list) return;
+
+      var items = tasks.filter(function (t) {
+        return t.status === status;
+      });
       items = applyFilters(items);
 
       list.innerHTML = "";
-      countEl.textContent = items.length;
+      if (countEl) countEl.textContent = items.length;
 
       if (items.length === 0) {
         var hint = document.createElement("div");
@@ -76,57 +127,88 @@
         hint.textContent = "Bu sütunda tapşırıq yoxdur";
         list.appendChild(hint);
       } else {
-        items.forEach(function (task) { list.appendChild(renderCard(task)); });
+        items.forEach(function (task) {
+          list.appendChild(renderCard(task));
+        });
       }
-
-      renderFoot(status);
     });
     renderStats();
   }
 
   function renderStats() {
     var total = tasks.length;
-    var done = tasks.filter(function (t) { return t.status === "done"; }).length;
+    var done = tasks.filter(function (t) {
+      return t.status === "done";
+    }).length;
     var statsEl = document.getElementById("boardStats");
     if (statsEl) {
       statsEl.innerHTML =
-        "<span>Cəmi: <b>" + total + "</b></span><span>Bitmiş: <b>" + done + "</b></span>";
+        "<span>Cəmi: <b>" + total + "</b></span>" +
+        "<span>Bitmiş: <b>" + done + "</b></span>" +
+        (total > 0
+          ? "<span>İrəliləyiş: <b>" + Math.round((done / total) * 100) + "%</b></span>"
+          : "");
     }
   }
 
   function renderCard(task) {
     var card = document.createElement("div");
-    card.className = "card " + (ACCENT_BY_PRIORITY[task.priority] || "");
+    card.className = "task-card priority-" + (task.priority || "medium");
     card.draggable = true;
     card.dataset.id = task.id;
 
-    var top = document.createElement("div");
-    top.className = "card-top";
+    var title = document.createElement("div");
+    title.className = "title";
+    title.textContent = task.title || "";
+
+    var desc = document.createElement("div");
+    desc.className = "desc";
+    desc.textContent = task.desc || "";
+
+    var meta = document.createElement("div");
+    meta.className = "meta";
+
+    var badge = document.createElement("span");
+    badge.className = "priority-badge priority-" + (task.priority || "medium");
+    badge.textContent = PRIORITY_LABEL[task.priority] || task.priority;
 
     var code = document.createElement("span");
-    code.className = "card-id";
-    code.textContent = task.code;
-
-    var prio = document.createElement("span");
-    prio.className = "priority " + task.priority;
-    prio.textContent = task.priority;
-
-    top.appendChild(code);
-    top.appendChild(prio);
-
-    var text = document.createElement("div");
-    text.className = "card-text";
-    text.textContent = task.text;
-    text.title = "Redaktə etmək üçün klikləyin";
+    code.className = "code";
+    code.textContent = task.code || "";
 
     var actions = document.createElement("div");
-    actions.className = "card-actions";
-    actions.appendChild(iconButton("edit", function () { startEdit(text, task); }));
-    actions.appendChild(iconButton("delete", function () { deleteTask(task.id); }));
+    actions.className = "actions";
 
-    card.appendChild(top);
-    card.appendChild(text);
-    card.appendChild(actions);
+    var editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "edit-btn";
+    editBtn.title = "Redaktə et";
+    editBtn.textContent = "✏️";
+    editBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      openModal(task);
+    });
+
+    var delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "delete-btn";
+    delBtn.title = "Sil";
+    delBtn.textContent = "🗑️";
+    delBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      deleteTask(task.id);
+    });
+
+    actions.appendChild(editBtn);
+    actions.appendChild(delBtn);
+
+    meta.appendChild(badge);
+    meta.appendChild(code);
+    meta.appendChild(actions);
+
+    card.appendChild(title);
+    if (task.desc) card.appendChild(desc);
+    card.appendChild(meta);
 
     card.addEventListener("dragstart", function (e) {
       draggedId = task.id;
@@ -138,246 +220,142 @@
     card.addEventListener("dragend", function () {
       card.classList.remove("dragging");
       draggedId = null;
+      document.querySelectorAll(".column").forEach(function (col) {
+        col.classList.remove("drop-over");
+      });
     });
 
     return card;
   }
 
-  function iconButton(kind, onClick) {
-    var btn = document.createElement("button");
-    btn.className = "icon-btn";
-    btn.type = "button";
-    btn.title = kind === "edit" ? "Redaktə et" : "Sil";
-    btn.innerHTML = kind === "edit"
-      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>'
-      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>';
-    btn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      onClick();
-    });
-    return btn;
-  }
-
-  function startEdit(textEl, task) {
-    textEl.contentEditable = "true";
-    textEl.focus();
-    placeCursorAtEnd(textEl);
-
-    function finish(doSave) {
-      textEl.contentEditable = "false";
-      textEl.removeEventListener("blur", onBlur);
-      textEl.removeEventListener("keydown", onKey);
-      if (doSave) {
-        var newText = textEl.textContent.trim();
-        if (newText) {
-          task.text = newText;
-          persistAndRender();
-        } else {
-          textEl.textContent = task.text;
-        }
-      } else {
-        textEl.textContent = task.text;
-      }
-    }
-
-    function onBlur() {
-      finish(true);
-    }
-
-    function onKey(e) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        textEl.blur();
-      }
-      if (e.key === "Escape") {
-        finish(false);
-      }
-    }
-
-    textEl.addEventListener("blur", onBlur);
-    textEl.addEventListener("keydown", onKey);
-  }
-
-  function placeCursorAtEnd(el) {
-    var range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    var sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }
-
   function deleteTask(id) {
-    if (confirm("Tapşırığı silmək istədiyinizə əminsiniz?")) {
-      tasks = tasks.filter(function (t) { return t.id !== id; });
-      persistAndRender();
-    }
-  }
-
-  function renderFoot(status) {
-    var foot = document.querySelector('[data-foot="' + status + '"]');
-    foot.innerHTML = "";
-    var trigger = document.createElement("button");
-    trigger.className = "new-task-trigger";
-    trigger.type = "button";
-    trigger.textContent = "+ Tapşırıq əlavə et";
-    trigger.addEventListener("click", function () { showAddForm(status); });
-    foot.appendChild(trigger);
-  }
-
-  function showAddForm(status) {
-    var foot = document.querySelector('[data-foot="' + status + '"]');
-    foot.innerHTML = "";
-
-    var form = document.createElement("div");
-    form.className = "add-form";
-
-    var textarea = document.createElement("textarea");
-    textarea.placeholder = "Tapşırığı yazın…";
-    textarea.rows = 2;
-
-    var row = document.createElement("div");
-    row.className = "add-form-row";
-
-    var select = document.createElement("select");
-    select.className = "prio-select";
-    ["low", "med", "high"].forEach(function (p) {
-      var opt = document.createElement("option");
-      opt.value = p;
-      opt.textContent = p.toUpperCase();
-      if (p === "med") opt.selected = true;
-      select.appendChild(opt);
-    });
-
-    var btnRow = document.createElement("div");
-    btnRow.style.display = "flex";
-    btnRow.style.gap = "6px";
-
-    var cancelBtn = document.createElement("button");
-    cancelBtn.className = "icon-btn cancel-btn";
-    cancelBtn.type = "button";
-    cancelBtn.textContent = "Ləğv et";
-    cancelBtn.addEventListener("click", function () { renderFoot(status); });
-
-    var addBtn = document.createElement("button");
-    addBtn.className = "add-btn-mini";
-    addBtn.type = "button";
-    addBtn.textContent = "Əlavə et";
-    addBtn.addEventListener("click", function () {
-      commitNewTask(textarea.value, select.value, status);
-    });
-
-    btnRow.appendChild(cancelBtn);
-    btnRow.appendChild(addBtn);
-    row.appendChild(select);
-    row.appendChild(btnRow);
-    form.appendChild(textarea);
-    form.appendChild(row);
-    foot.appendChild(form);
-
-    textarea.focus();
-    textarea.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        commitNewTask(textarea.value, select.value, status);
-      }
-    });
-  }
-
-  function commitNewTask(text, priority, status) {
-    var trimmed = (text || "").trim();
-    if (!trimmed) return;
-
-    var isDuplicate = tasks.some(function (t) {
-      return t.status === status && t.text.trim().toLowerCase() === trimmed.toLowerCase();
-    });
-
-    if (isDuplicate) {
-      alert("Bu tapşırıq artıq bu sütunda mövcuddur.");
-      return;
-    }
-
-    tasks.push({
-      id: uid(),
-      code: "TSK-" + String(nextSeq++).padStart(3, "0"),
-      text: trimmed,
-      status: status,
-      priority: priority
+    if (!confirm("Tapşırığı silmək istədiyinizə əminsiniz?")) return;
+    tasks = tasks.filter(function (t) {
+      return t.id !== id;
     });
     persistAndRender();
-    renderFoot(status);
   }
 
-  function persistAndRender() {
-    save();
-    render();
+  /* ---------- Modal ---------- */
+  var overlay = document.getElementById("modalOverlay");
+  var form = document.getElementById("taskForm");
+  var modalTitle = document.getElementById("modalTitle");
+  var titleInput = document.getElementById("taskTitle");
+  var descInput = document.getElementById("taskDesc");
+  var prioritySelect = document.getElementById("taskPriority");
+  var cancelBtn = document.getElementById("cancelBtn");
+
+  function openModal(task) {
+    editingId = task ? task.id : null;
+    modalTitle.textContent = task ? "Tapşırığı redaktə et" : "Yeni Tapşırıq";
+    titleInput.value = task ? task.title : "";
+    descInput.value = task ? task.desc || "" : "";
+    prioritySelect.value = task ? task.priority || "medium" : "medium";
+    overlay.classList.add("open");
+    setTimeout(function () {
+      titleInput.focus();
+    }, 50);
   }
 
+  function closeModal() {
+    overlay.classList.remove("open");
+    editingId = null;
+    form.reset();
+  }
 
-  document.querySelectorAll(".lane").forEach(function (lane) {
-    lane.addEventListener("dragover", function (e) {
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var title = titleInput.value.trim();
+    if (!title) return;
+
+    var desc = descInput.value.trim();
+    var priority = prioritySelect.value;
+
+    if (editingId) {
+      var task = tasks.find(function (t) {
+        return t.id === editingId;
+      });
+      if (task) {
+        task.title = title;
+        task.desc = desc;
+        task.priority = priority;
+      }
+    } else {
+      var next = computeNextSeq();
+      tasks.push({
+        id: uid(),
+        code: "TSK-" + String(next).padStart(3, "0"),
+        title: title,
+        desc: desc,
+        status: "todo",
+        priority: priority
+      });
+    }
+    persistAndRender();
+    closeModal();
+  });
+
+  cancelBtn.addEventListener("click", closeModal);
+  overlay.addEventListener("click", function (e) {
+    if (e.target === overlay) closeModal();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && overlay.classList.contains("open")) closeModal();
+  });
+
+  document.getElementById("addTaskBtn").addEventListener("click", function () {
+    openModal(null);
+  });
+
+  /* ---------- Drag & Drop ---------- */
+  document.querySelectorAll(".column").forEach(function (column) {
+    column.addEventListener("dragover", function (e) {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-      lane.classList.add("drag-over");
+      column.classList.add("drop-over");
     });
 
-    lane.addEventListener("dragleave", function () {
-      lane.classList.remove("drag-over");
+    column.addEventListener("dragleave", function (e) {
+      if (!column.contains(e.relatedTarget)) {
+        column.classList.remove("drop-over");
+      }
     });
 
-    lane.addEventListener("drop", function (e) {
+    column.addEventListener("drop", function (e) {
       e.preventDefault();
-      lane.classList.remove("drag-over");
+      column.classList.remove("drop-over");
       var id = e.dataTransfer.getData("text/plain") || draggedId;
       if (!id) return;
-      var task = tasks.find(function (t) { return t.id === id; });
-      if (task && task.status !== lane.dataset.status) {
-        task.status = lane.dataset.status;
+      var task = tasks.find(function (t) {
+        return t.id === id;
+      });
+      var newStatus = column.dataset.column;
+      if (task && task.status !== newStatus) {
+        task.status = newStatus;
         persistAndRender();
       }
     });
   });
 
+  /* ---------- Toolbar ---------- */
+  document.getElementById("searchInput").addEventListener("input", function (e) {
+    searchQuery = e.target.value.trim().toLowerCase();
+    render();
+  });
 
-  var spotlight = document.getElementById("spotlight");
-  if (spotlight) {
-    window.addEventListener("mousemove", function (e) {
-      spotlight.style.setProperty("--mx", e.clientX + "px");
-      spotlight.style.setProperty("--my", e.clientY + "px");
-    });
-  }
+  document.getElementById("filterPriority").addEventListener("change", function (e) {
+    priorityFilter = e.target.value;
+    render();
+  });
 
+  document.getElementById("resetBtn").addEventListener("click", function () {
+    searchQuery = "";
+    priorityFilter = "all";
+    document.getElementById("searchInput").value = "";
+    document.getElementById("filterPriority").value = "all";
+    render();
+  });
 
-  var field = document.getElementById("particles");
-  if (field) {
-    var PARTICLE_COUNT = 22;
-    for (var i = 0; i < PARTICLE_COUNT; i++) {
-      var p = document.createElement("i");
-      p.style.left = (Math.random() * 100) + "vw";
-      var duration = 10 + Math.random() * 14;
-      p.style.animationDuration = duration + "s";
-      p.style.animationDelay = (Math.random() * duration) + "s";
-      p.style.width = p.style.height = (2 + Math.random() * 2) + "px";
-      if (Math.random() > 0.6) p.style.background = "var(--teal)";
-      field.appendChild(p);
-    }
-  }
-
-  
-  var searchInput = document.getElementById("searchInput");
-  if (searchInput) {
-    searchInput.addEventListener("input", function (e) {
-      searchQuery = e.target.value.trim().toLowerCase();
-      render();
-    });
-  }
-
-  var priorityFilterEl = document.getElementById("priorityFilter");
-  if (priorityFilterEl) {
-    priorityFilterEl.addEventListener("change", function (e) {
-      priorityFilter = e.target.value;
-      render();
-    });
-  }
-
+  // İlk render
   render();
 })();
